@@ -1,0 +1,310 @@
+openapi: 3.0.3
+info:
+  title: Support Desk
+  version: 0.1.0-draft
+  description: |
+    Локальный HTTP-черновик по маршрутам из cmd/api/router.go.
+    Для ручной проверки создай тикет, отправь сообщение с его ticket_id,
+    затем запроси тикет и историю. Используй один и тот же ID во всех запросах.
+    Текущий черновик принимает ID из JSON. Создание тикета и запись сообщения
+    выполняются отдельными запросами. Авторизация и автоприветствие относятся к плану.
+servers:
+  - url: http://localhost:8080
+    description: Локальный Gin
+tags:
+  - name: Служебные
+  - name: Тикеты
+  - name: Сообщения
+
+paths:
+  /ping:
+    get:
+      tags: [Служебные]
+      summary: Проверить доступность сервера
+      operationId: ping
+      responses:
+        '200':
+          description: Gin отвечает
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    enum: [pong]
+              example:
+                message: pong
+
+  /api/v1/ticket/users:
+    post:
+      tags: [Тикеты]
+      summary: Сохранить тикет
+      operationId: createTicket
+      description: |
+        Этот путь вызывает TicketHandler.NewTicket.
+        Ключ записи берётся из поля id тела запроса.
+        Повторный id в текущем хранилище перезаписывает тикет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+            example:
+              id: ticket-001
+              requester_id: user-001
+              agent_id: ''
+              title: Не могу войти
+              status: waiting
+              version: '1'
+      responses:
+        '201':
+          description: Сохранён ID тикета
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket:
+                    type: string
+              example:
+                ticket: ticket-001
+        '400':
+          $ref: '#/components/responses/InvalidJSON'
+        '500':
+          $ref: '#/components/responses/ServiceError'
+
+  /api/v1/ticket/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TicketID'
+    get:
+      tags: [Тикеты]
+      summary: Получить тикет по ID
+      operationId: getTicket
+      description: |
+        При неизвестном ID текущий LoadTicket возвращает 200
+        с объектом Ticket, в котором все поля содержат пустые строки.
+      responses:
+        '200':
+          description: Объект тикета в поле ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket:
+                    $ref: '#/components/schemas/Ticket'
+              example:
+                ticket:
+                  id: ticket-001
+                  requester_id: user-001
+                  agent_id: ''
+                  title: Не могу войти
+                  description: ''
+                  status: waiting
+                  version: '1'
+                  created_at: ''
+                  updated_at: ''
+                  closed_at: ''
+                  time_to_live: ''
+                  closed_reason: ''
+                  close_requested_at: ''
+                  close_request_message_id: ''
+        '500':
+          $ref: '#/components/responses/ServiceError'
+
+  /api/message/v1/:
+    post:
+      tags: [Сообщения]
+      summary: Записать сообщение в историю тикета
+      operationId: createMessage
+      description: |
+        Для этого маршрута в роутере указан завершающий слеш.
+        Идентификаторы сообщения и тикета, автор и время читаются из JSON.
+        Текущая проверка текста принимает от 1 до 4099 rune после TrimSpace.
+        В черновике ошибка проверки возвращается как 500 после попытки записи.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Message'
+            example:
+              id: msg-001
+              ticket_id: ticket-001
+              sender_id: user-001
+              message_author: user
+              body: Не могу войти в аккаунт
+              created_at: '2026-11-26T10:00:00+05:00'
+      responses:
+        '201':
+          description: Записанное сообщение в поле message
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    $ref: '#/components/schemas/Message'
+              example:
+                message:
+                  id: msg-001
+                  ticket_id: ticket-001
+                  sender_id: user-001
+                  message_author: user
+                  body: Не могу войти в аккаунт
+                  created_at: '2026-11-26T10:00:00+05:00'
+        '400':
+          $ref: '#/components/responses/InvalidJSON'
+        '500':
+          description: Сервис сообщил об ошибке, в том числе об ошибке проверки текста
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: error with store message
+
+  /api/message/v1/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TicketID'
+    get:
+      tags: [Сообщения]
+      summary: Получить историю тикета
+      operationId: getTicketHistory
+      description: |
+        Параметр id содержит ID тикета. История возвращается в порядке записи.
+        При отсутствии записей текущее хранилище возвращает null.
+      responses:
+        '200':
+          description: Массив сообщений или null в поле message
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: array
+                    nullable: true
+                    items:
+                      $ref: '#/components/schemas/Message'
+              examples:
+                withMessage:
+                  summary: В истории есть сообщение
+                  value:
+                    message:
+                      - id: msg-001
+                        ticket_id: ticket-001
+                        sender_id: user-001
+                        message_author: user
+                        body: Не могу войти в аккаунт
+                        created_at: '2026-11-26T10:00:00+05:00'
+                noMessages:
+                  summary: По ID ещё нет записей
+                  value:
+                    message: null
+        '500':
+          $ref: '#/components/responses/ServiceError'
+
+components:
+  parameters:
+    TicketID:
+      name: id
+      in: path
+      required: true
+      description: Строковый идентификатор тикета
+      schema:
+        type: string
+      example: ticket-001
+  responses:
+    InvalidJSON:
+      description: Gin не смог разобрать тело запроса как JSON
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unexpected EOF
+    ServiceError:
+      description: Ошибка, полученная обработчиком от сервиса
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Ticket:
+      type: object
+      properties:
+        id:
+          type: string
+          example: ticket-001
+        requester_id:
+          type: string
+          example: user-001
+        agent_id:
+          type: string
+          description: Пустая строка, пока оператор не назначен
+          example: ''
+        title:
+          type: string
+          example: Не могу войти
+        description:
+          type: string
+        status:
+          type: string
+          description: 'Статусы модели: waiting, in_progress, resolved, closed. При записи черновик принимает строку.'
+          example: waiting
+        version:
+          type: string
+          example: '1'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+        closed_at:
+          type: string
+        time_to_live:
+          type: string
+        closed_reason:
+          type: string
+        close_requested_at:
+          type: string
+        close_request_message_id:
+          type: string
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          example: msg-001
+        ticket_id:
+          type: string
+          example: ticket-001
+        sender_id:
+          type: string
+          nullable: true
+          description: ID аккаунта. Для системного сообщения передавай null.
+          example: user-001
+        message_author:
+          type: string
+          description: 'Категории для чата: user, agent, system. В черновике принимается строка.'
+          example: user
+        body:
+          type: string
+          description: От 1 до 4099 Unicode-кодовых точек после удаления пробелов по краям.
+          example: Не могу войти в аккаунт
+        created_at:
+          type: string
+          example: '2026-11-26T10:00:00+05:00'
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

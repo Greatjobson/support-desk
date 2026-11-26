@@ -13,5 +13,14 @@ func setupRouter(r *gin.Engine, messageHandler *handler.MessageHandler, ticketHa
 		})
 	})
 
-	r.POST("/message", messageHandler.CreatMessage)
+	api := r.Group("/api/message/v1")
+	{
+		api.GET("/:id", messageHandler.GetMessages)
+		api.POST("/", messageHandler.CreatMessage)
+	}
+	api2 := r.Group("/api/v1/ticket")
+	{
+		api2.GET("/:id", ticketHandler.GetTicket)
+		api2.POST("/users", ticketHandler.NewTicket)
+	}
 }
